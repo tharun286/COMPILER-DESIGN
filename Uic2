@@ -1,0 +1,308 @@
+import { useState, useEffect, useRef } from "react";
+import { User, Document } from "../../MainPageContent";
+import { getDomain } from "../../context/DomainContext";
+import { HlsSelectSourceAsset } from "../ConvertContent/HlsSelectSourceAsset";
+import { HlsSelectAgent } from "./HlsSelectAgent";
+import { HlsAgentHistory } from "./HlsAgentHistory";
+import { harvestClaims, autotagFromExisting } from "../../services/hlsAgentsApi";
+import { Button } from "../ui/button";
+import { Sparkles, Loader2 } from "lucide-react";
+
+type ContentPersonalizationEngineProps = {
+    user: User;
+    onBack: () => void;
+    onLogout: () => void;
+    onAdminClick: () => void;
+    onPersonalizeContentClick: () => void;
+    onConfigurationClick?: () => void;
+    onWorkflowClick?: () => void;
+};
+
+export function HlsAgents({
+    user,
+    onBack,
+    onLogout,
+    onAdminClick,
+    onWorkflowClick,
+    onPersonalizeContentClick,
+    onConfigurationClick,
+}: ContentPersonalizationEngineProps) {
+    const domain = getDomain();
+    const [selectedAssets, setSelectedAssets] = useState<Document[]>([]);
+    const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+    const [selectedAgentBrand, setSelectedAgentBrand] = useState<string>("");
+    const [isRunning, setIsRunning] = useState(false);
+    const [isAutoTagging, setIsAutoTagging] = useState(false);
+    const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+    const [runError, setRunError] = useState<string | null>(null);
+    const [successMessage, setSuccessMessage] = useState<string | null>(null);
+    const [runBlocked, setRunBlocked] = useState(false);
+    const [latestRun, setLatestRun] = useState<any | null>(null);
+    const [refreshTrigger, setRefreshTrigger] = useState(0);
+    const [hideAssets, setHideAssets] = useState<boolean>(true);
+
+    const isRunEnabled =
+        (selectedAgent === "Claims Harvestor"
+            ? selectedAgentBrand.trim().length > 0 && selectedAgent !== null
+            : selectedAssets.length > 0 && selectedAgent !== null && selectedAgentBrand.trim().length > 0
+        );
+
+    const handleAssetsChange = (assets: Document[]) => {
+        setSelectedAssets(assets);
+        setRunError(null);
+        setSuccessMessage(null);
+        setRunBlocked(false);
+    };
+
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+    const handleAgentSettingsSubmit = (data: { brandName: string; agentName: string | null }) => {
+        setSelectedAgent(data.agentName);
+        setSelectedAgentBrand(data.brandName);
+        setRunError(null);
+        setSuccessMessage(null);
+        setRunBlocked(false);
+    };
+
+    useEffect(() => {
+        const handler = (e: Event) => {
+            try {
+                // @ts-ignore
+                const detail = e.detail || {};
+                setHideAssets(Boolean(detail.hideAssets));
+            } catch {
+                setHideAssets(false);
+            }
+        };
+
+        window.addEventListener('hls-agent-changed', handler as EventListener);
+        return () => window.removeEventListener('hls-agent-changed', handler as EventListener);
+    }, []);
+
+    const handleRunAgent = async () => {
+        setRunError(null);
+        setSuccessMessage(null);
+
+        if (!isRunEnabled) {
+            setRunError("Please select at least one asset and configure an agent before running.");
+            return;
+        }
+
+        setIsRunning(true);
+
+        try {
+            if (selectedAgent === "Claims Harvestor") {
+                const result = await harvestClaims({
+                    brandName: selectedAgentBrand,
+                    selectedAssets: selectedAssets.map((asset) => ({
+                        id: asset.id,
+                        filename: asset.filename,
+                        document_id: (asset as any).document_id,
+                    })),
+                    domain,
+                });
+
+                const claimCount = Array.isArray(result.claims)
+                    ? result.claims.length
+                    : 0;
+
+                setSuccessMessage(
+                    `Harvested ${claimCount} claim${claimCount === 1 ? "" : "s"} for ${selectedAgentBrand}.`
+                );
+
+                // Block running again until user changes selection/settings
+                setRunBlocked(true);
+
+                // Create a local history item so the history panel shows the result immediately
+                const runId = result.transaction_uuid || `local-${Date.now()}`;
+                const runItem = {
+                    id: `local-${runId}`,
+                    uuid: result.transaction_uuid || runId,
+                    transaction_uuid: result.transaction_uuid || runId,
+                    agentType: selectedAgent || "harvesting-claims-agent",
+                    createdPerson: selectedAgentBrand || (user as any)?.name || (user as any)?.email || "You",
+                    createdAt: new Date().toISOString(),
+                    created_at: new Date().toISOString(),
+                    sourceFile: `${result.documents?.length || 0} documents`,
+                    outputFilePath: "",
+                    status: "completed",
+                    harvested_claims: (result.harvested_claims || []).map((claim: any) => {
+                        const rawSource = claim.source_documents || claim.sourceDocuments || claim.source_document || claim.sourceDocument || claim.documents || claim.document_id || claim.filename || [];
+                        const sourceArray = Array.isArray(rawSource) ? rawSource : rawSource ? [rawSource] : [];
+                        return {
+                            ...claim,
+                            uuid: claim.uuid || `local-${Math.random().toString(36).substring(2)}`,
+                            documents: claim.documents || (Array.isArray(sourceArray) ? sourceArray : []),
+                            source_documents: sourceArray,
+                            sourceDocument: sourceArray.join(', '),
+                            source_document: sourceArray.join(', '),
+                            is_pushed_to_promomats: claim.is_pushed_to_promomats || false,
+                        };
+                    }),
+                };
+
+                setLatestRun(runItem);
+                setRefreshTrigger((t) => t + 1);
+            } else {
+                setSuccessMessage(
+                    `Agent "${selectedAgent}" is configured and ready to run, but backend integration is available only for Claims Harvestor agent.`
+                );
+            }
+        } catch (error: any) {
+            setRunError(error?.message || "Failed to run the agent.");
+        } finally {
+            setIsRunning(false);
+        }
+    };
+
+    const handleTestAutoTag = async () => {
+        setRunError(null);
+        setSuccessMessage(null);
+
+        if (!uploadedFile) {
+            setRunError("Upload a file to test auto tagging.");
+            return;
+        }
+
+        setIsAutoTagging(true);
+
+        try {
+            await autotagFromExisting({
+                document: uploadedFile,
+                documentId: "4307_0_1",
+                claimsMatch: {"V1W000000001001": "synaptic density over 12 months"},
+                connectorType: "promomats",
+            });
+
+            setSuccessMessage(`Auto tag request sent for ${uploadedFile.name}.`);
+        } catch (error: any) {
+            setRunError(error?.message || "Failed to run auto tag.");
+        } finally {
+            setIsAutoTagging(false);
+        }
+    };
+
+    return (
+        <div className="hls_domain">
+            <div className="h-[91vh] bg-[var(--hls-surface)] flex flex-col">
+                <div className="relative w-full">
+                    <div className="w-full h-28 bg-[var(--hls-primary)] opacity-90" />
+                </div>
+
+                <div className="flex-1 -mt-24 mb-3 z-2 w-[92%] mx-auto flex flex-col gap-2">
+                    <div className="text-4xl text-white font-bold">Explore Agents</div>
+
+                    <div className="p-6 flex-1 max-w-full mx-auto flex flex-col gap-4 bg-[var(--hls-background)] border-[var(--hls-border)] border rounded-[12px] shadow-lg overflow-hidden">
+                        <div className={`grid ${hideAssets ? "grid-cols-[2.2fr_1.2fr]" : "grid-cols-[1.25fr_1.15fr_1.1fr]"} flex-1 min-h-0 divide-x divide-[var(--hls-border)]`}
+                           >
+                        
+                            <div className="flex flex-col h-full overflow-y-auto">
+                                <div className="flex-1">
+                                    <HlsSelectAgent
+                                        selectedAgent={selectedAgent}
+                                        selectedAgentBrand={selectedAgentBrand}
+                                        onAgentSettingsSubmit={handleAgentSettingsSubmit}
+                                    />
+                                </div>
+                            </div>
+
+                            {!hideAssets && (
+                                <HlsSelectSourceAsset
+                                    selectedAssets={selectedAssets}
+                                    onAssetsChange={handleAssetsChange}
+                                    domain={domain}
+                                />
+                            )}
+
+                            <HlsAgentHistory latestRun={latestRun} refreshTrigger={refreshTrigger} selectedAgentBrand={selectedAgentBrand} selectedAgent={selectedAgent} />
+                        </div>
+                    </div>
+
+                    {/* Run Agent Button - Outside the white box, positioned below */}
+                    <div className="flex flex-col items-center gap-3 w-full">
+                        {(runError || successMessage) && (
+                            <div className="text-sm text-center">
+                                {runError ? (
+                                    <span className="text-red-600">{runError}</span>
+                                ) : (
+                                    <span className="text-green-700">{successMessage}</span>
+                                )}
+                            </div>
+                        )}
+
+                        <Button
+                            onClick={handleRunAgent}
+                            disabled={!isRunEnabled || isRunning || runBlocked}
+                            className="h-10 px-8 rounded-full bg-[var(--hls-primary)] hover:bg-[var(--hls-primary)]/80 text-white flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {isRunning ? (
+                                <Loader2 className="size-5 animate-spin" />
+                            ) : (
+                                <Sparkles className="size-5" />
+                            )}
+
+                            {isRunning ? "Running Agent..." : "Run Agent"}
+                        </Button>
+
+                        <div className="text-xs text-slate-500 text-center">
+                            {selectedAgent
+                                ? `Selected agent: ${selectedAgent}`
+                                : "Select an agent to configure."}
+                            {selectedAgentBrand ? ` Brand: ${selectedAgentBrand}` : ""}
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col items-center gap-2 py-3">
+                        {(runError || successMessage) && (
+                            <div className="text-sm text-center">
+                                {runError ? (
+                                    <span className="text-red-600">{runError}</span>
+                                ) : (
+                                    <span className="text-green-700">{successMessage}</span>
+                                )}
+                            </div>
+                        )}
+
+                        {/* <div className="flex flex-col items-center gap-2 w-full">
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept=".pdf,.doc,.docx,.txt"
+                                className="hidden"
+                                onChange={(e) => {
+                                    setUploadedFile(e.target.files?.[0] || null);
+                                    setRunError(null);
+                                    setSuccessMessage(null);
+                                }}
+                            />
+                            <div className="flex flex-wrap justify-center gap-2 w-full">
+                                <Button
+                                    onClick={() => fileInputRef.current?.click()}
+                                    className="h-10 px-6 rounded-full flex items-center gap-2"
+                                >
+                                    {uploadedFile ? "Change upload" : "Upload file for auto tag"}
+                                </Button>
+                                {uploadedFile && (
+                                    <span className="text-xs text-slate-500 truncate max-w-xs">Selected file: {uploadedFile.name}</span>
+                                )}
+                            </div>
+                        </div> */}
+
+                        
+
+                        {/* <Button
+                            onClick={handleTestAutoTag}
+                            disabled={!uploadedFile || isAutoTagging}
+                        >
+                            {isAutoTagging ? <Loader2 className="size-5 animate-spin" /> : <Sparkles className="size-5" />}
+                            {isAutoTagging ? "Running Auto tag..." : "Test auto tag"}
+                        </Button> */}
+
+                        
+                    </div>
+                </div>
+            </div>
+            <div className="h-0" />
+        </div>
+    );
+}
