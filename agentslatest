@@ -205,7 +205,7 @@ export function HlsAgents({
                                 />
 
                                 {/* Run Agent Button - Inside Select Agent Column */}
-                                <div className="flex flex-col items-center gap-2 mt-auto px-4 pb-4">
+                                <div className="flex flex-col items-center gap-2 mt-auto pt-3 px-4 pb-4">
                                     {(runError || successMessage) && (
                                         <div className="text-sm text-center w-full">
                                             {runError ? (
@@ -219,7 +219,7 @@ export function HlsAgents({
                                     <Button
                                         onClick={handleRunAgent}
                                         disabled={!isRunEnabled || isRunning || runBlocked}
-                                        className="h-10 px-8 rounded-full bg-[var(--hls-primary)] hover:bg-[var(--hls-primary)]/80 text-white flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed w-full justify-center"
+                                        className="h-10 px-6 rounded-full bg-[var(--hls-primary)] hover:bg-[var(--hls-primary)]/80 text-white flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed justify-center"
                                     >
                                         {isRunning ? (
                                             <Loader2 className="size-5 animate-spin" />
