@@ -1,0 +1,197 @@
+import { useState, useEffect } from "react";
+import { Card } from "../ui/card";
+import {
+  BrainCircuit,
+  ShieldCheck,
+  Bot,
+  Network,
+  CircleCheck,
+} from "lucide-react";
+import { AgentSettingsModal } from "./AgentSettingsModal";
+
+type HlsSelectAgentProps = {
+  selectedAgent: string | null;
+  selectedAgentBrand: string;
+  onAgentSettingsSubmit: (data: {
+    brandName: string;
+    agentName: string | null;
+  }) => void;
+};
+
+export function HlsSelectAgent({
+  selectedAgent,
+  selectedAgentBrand,
+  onAgentSettingsSubmit,
+}: HlsSelectAgentProps) {
+  const [activeAgent, setActiveAgent] = useState<string | null>(selectedAgent);
+  const [showAgentModal, setShowAgentModal] = useState(false);
+
+  useEffect(() => {
+    setActiveAgent(selectedAgent);
+  }, [selectedAgent]);
+
+  const agentButtons = [
+    {
+      id: "Auto Tagging Agent",
+      icon: Bot,
+      title: "Auto Tagging Agent",
+      summary:
+        "Tags Text Assets and Reference Documents directly in Veeva.",
+    },
+    {
+      id: "Claims Harvester",
+      icon: BrainCircuit,
+      title: "Claims Harvester",
+      summary:
+        "Extracts, reviews, and uploads brand claims to Veeva.",
+    },
+    {
+      id: "External Auto Tagging Agent",
+      icon: ShieldCheck,
+      title: "External Auto Tagging Agent",
+      summary:
+        "Generates MLR pre-checks and automatically tags content assets in Veeva.",
+    },
+    {
+      id: "Auto Update Agent",
+      icon: Network,
+      title: "Auto Update Agent",
+      summary:
+        "Updates claims across linked assets and creates new versions in Veeva.",
+    },
+  ];
+
+  const handleAgentClick = (agentId: string) => {
+    setActiveAgent(agentId);
+    setShowAgentModal(true);
+
+    try {
+      const hideAssets = agentId === "Claims Harvester";
+
+      window.dispatchEvent(
+        new CustomEvent("hls-agent-changed", {
+          detail: {
+            agentId,
+            hideAssets,
+          },
+        })
+      );
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const AgentButton = ({
+    agent,
+    icon: Icon,
+    title,
+    summary,
+    onClick,
+  }: {
+    agent: string;
+    icon: React.ComponentType<{ className?: string }>;
+    title: string;
+    summary: string;
+    onClick: () => void;
+  }) => (
+    <Card
+      onClick={onClick}
+      className={`
+        cursor-pointer
+        rounded-2xl
+        border
+        p-4
+        relative
+        min-h-[180px]
+        transition-all
+        duration-200
+        hover:-translate-y-1
+        hover:shadow-lg
+        ${
+          activeAgent === agent
+            ? "border-[var(--hls-primary)] bg-[var(--hls-primary)]/15 shadow-md"
+            : "border-slate-200 bg-[#F3F1FF]"
+        }
+      `}
+    >
+      {activeAgent === agent && (
+        <CircleCheck
+          className="absolute top-3 right-3 size-5 text-[var(--hls-primary)]"
+        />
+      )}
+
+      <Icon
+        className={`size-7 mb-3 ${
+          activeAgent === agent
+            ? "text-[var(--hls-primary)]"
+            : "text-slate-600"
+        }`}
+      />
+
+      <div className="font-semibold text-sm text-slate-900 mb-2">
+        {title}
+      </div>
+
+      <div className="text-xs text-slate-500 leading-relaxed">
+        {summary}
+      </div>
+    </Card>
+  );
+
+  return (
+    <>
+      <div className="flex flex-col h-full px-6 pt-0 pb-0">
+        <div className="mb-1 flex-shrink-0 px-4 py-1">
+          <div className="flex items gap-3">
+            <Bot className="text-[var(--hls-primary)] size-10 flex-shrink-0" />
+
+            <div>
+              <h3 className="text-lg font-bold text-slate-800">
+                Select Agent
+              </h3>
+
+              <p className="text-[10px] text-[var(--hls-muted)] uppercase tracking-wide">
+                Choose an Agent
+              </p>
+            </div>
+          </div>
+
+          {selectedAgentBrand && (
+            <div className="mt-2 text-xs text-slate-500">
+              Selected Brand:{" "}
+              <span className="font-medium">
+                {selectedAgentBrand}
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+          <div className="grid grid-cols-2 gap-3">
+            {agentButtons.map((agent) => (
+              <AgentButton
+                key={agent.id}
+                agent={agent.id}
+                icon={agent.icon}
+                title={agent.title}
+                summary={agent.summary}
+                onClick={() => handleAgentClick(agent.id)}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <AgentSettingsModal
+        isOpen={showAgentModal}
+        selectedAgent={activeAgent}
+        initialBrandName={selectedAgentBrand}
+        onClose={() => setShowAgentModal(false)}
+        onSubmit={(data) => {
+          onAgentSettingsSubmit(data);
+          setShowAgentModal(false);
+        }}
+      />
+    </>
+  );
+}
