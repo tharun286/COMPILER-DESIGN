@@ -1,0 +1,1093 @@
+import { useEffect, useState } from "react";
+import { Button } from "../ui/button";
+import { Badge } from "../ui/badge";
+import { Separator } from "../ui/separator";
+import { Checkbox } from "../ui/checkbox";
+import {
+  Bot,
+  Brain,
+  Search,
+  Cpu,
+  FileSearch,
+  Clock,
+  RefreshCw,
+  Eye,
+  AlertCircle,
+  CheckCircle2,
+  Loader2,
+  History,
+  Filter,
+  User,
+  Check,
+  Download,
+  Send,
+  FileText,
+} from "lucide-react";
+import { middleware_url } from "../../../utils/constants";
+import { createClaimPromomats } from "../../services/hlsAgentsApi";
+import { getDomain } from "../../context/DomainContext";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "../ui/dropdown-menu";
+
+
+interface AgentHistoryItem {
+  id: string;
+  uuid: string;
+  agentType: string;
+  createdPerson: string;
+  createdAt: string;
+  sourceFile?: string;
+  outputFilePath?: string;
+  brand_name?: string;
+  status: "completed" | "failed" | "pending";
+  harvested_claims?: Array<{
+    uuid: string;
+    documents?: any;
+    claims?: any;
+    is_pushed_to_promomats?: boolean;
+  }>;
+}
+
+export function HlsAgentHistory({ latestRun, refreshTrigger, selectedAgentBrand, selectedAgent }: { latestRun?: any; refreshTrigger?: number; selectedAgentBrand?: string; selectedAgent?: string | null }) {
+  const domain = getDomain();
+
+  const [historyItems, setHistoryItems] = useState<AgentHistoryItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+
+  const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
+  const [selectedCreatedPersons, setSelectedCreatedPersons] = useState<string[]>([]);
+  const [selectedFileNames, setSelectedFileNames] = useState<string[]>([]);
+
+  const [viewingItem, setViewingItem] =
+    useState<AgentHistoryItem | null>(null);
+
+  const [viewingContent, setViewingContent] = useState<any>(null);
+  const [selectedClaimUuids, setSelectedClaimUuids] = useState<string[]>([]);
+  const [editedClaimTexts, setEditedClaimTexts] = useState<Record<string, string>>({});
+  const [viewingLoading, setViewingLoading] = useState(false);
+  const [isPushing, setIsPushing] = useState(false);
+
+  useEffect(() => {
+    if (!latestRun) return;
+
+    setSelectedItemId(latestRun.id);
+    handleView(latestRun);
+  }, [latestRun]);
+
+  const toggleClaimSelection = (uuid: string) => {
+  setSelectedClaimUuids((prev) =>
+    prev.includes(uuid)
+      ? prev.filter((id) => id !== uuid)
+      : [...prev, uuid]
+  );
+};
+
+  const getUniqueAgents = () =>
+  Array.from(
+    new Set(historyItems.map((item) => item.agentType))
+  ).sort();
+
+const getUniqueCreatedPersons = () =>
+  Array.from(
+    new Set(
+      historyItems
+        .map((item) => item.createdPerson)
+        .filter(Boolean)
+    )
+  ).sort();
+
+const getUniqueFileNames = () =>
+  Array.from(
+    new Set(
+      historyItems
+        .map((item) => item.sourceFile)
+        .filter(Boolean)
+    )
+  ).sort();
+
+const toggleAgentFilter = (agent: string) => {
+  setSelectedAgents((prev) =>
+    prev.includes(agent)
+      ? prev.filter((a) => a !== agent)
+      : [...prev, agent]
+  );
+};
+
+const toggleCreatedPersonFilter = (person: string) => {
+  setSelectedCreatedPersons((prev) =>
+    prev.includes(person)
+      ? prev.filter((p) => p !== person)
+      : [...prev, person]
+  );
+};
+
+const toggleFileNameFilter = (fileName: string) => {
+  setSelectedFileNames((prev) =>
+    prev.includes(fileName)
+      ? prev.filter((f) => f !== fileName)
+      : [...prev, fileName]
+  );
+};
+
+const getFilteredHistoryItems = () => {
+  let filtered = [...historyItems];
+
+  if (selectedAgents.length > 0) {
+    filtered = filtered.filter((item) =>
+      selectedAgents.includes(item.agentType)
+    );
+  }
+
+  if (selectedCreatedPersons.length > 0) {
+    filtered = filtered.filter((item) =>
+      selectedCreatedPersons.includes(item.createdPerson)
+    );
+  }
+
+  if (selectedFileNames.length > 0) {
+    filtered = filtered.filter((item) =>
+      selectedFileNames.includes(item.sourceFile || "")
+    );
+  }
+
+  return filtered;
+};
+
+const formatAgentName = (agent: string) => {
+  if (!agent) return "Unknown";
+
+  const normalized = agent.trim().toLowerCase();
+  if (normalized === "harvest_claims" || normalized === "harvesting-claims-agent") {
+    return "Claims Harvestor";
+  }
+
+  return agent
+    .replace(/[_-]/g, " ")
+    .split(" ")
+    .map(
+      word =>
+        word.charAt(0).toUpperCase() +
+        word.slice(1).toLowerCase()
+    )
+    .join(" ");
+};
+
+const parseHistoryTimestamp = (timestamp: string | null | undefined) => {
+  if (!timestamp) return new Date();
+
+  // If the backend returns an ISO timestamp without timezone info,
+  // treat it as UTC so local display is correct.
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(timestamp)) {
+    return new Date(`${timestamp}Z`);
+  }
+
+  const date = new Date(timestamp);
+  return isNaN(date.getTime()) ? new Date() : date;
+};
+
+
+  const fetchAgentHistory = async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      const response = await fetch(
+        `${middleware_url}/batch_process/hls_platform/agent_history?domain=${domain}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${localStorage.getItem("token")}`,
+          },
+          credentials: "include",
+          body: JSON.stringify({}),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to load agent history");
+      }
+
+      const result = await response.json();
+
+      // Filter out entries that have no previewable content and sort recent-first
+      const items: any[] = result.data || [];
+
+      const hasPreview = (item: any) => {
+        // harvested_claims with entries OR an output file path indicate previewable content
+        if (item && item.harvested_claims) {
+          if (Array.isArray(item.harvested_claims) && item.harvested_claims.length > 0) return true;
+          if (item.harvested_claims && typeof item.harvested_claims === "object") {
+            return Object.keys(item.harvested_claims).length > 0;
+          }
+        }
+
+        if (item && item.outputFilePath) return true;
+
+        return false;
+      };
+
+      const normalizedItems = items.map((item: any) => {
+        const rawCreatedAt = item.createdAt || item.created_at || item.startedAt || new Date().toISOString();
+        const parsedCreatedAt = parseHistoryTimestamp(rawCreatedAt);
+
+        return {
+          ...item,
+          createdAt: parsedCreatedAt.toISOString(),
+          agentType: item.agentType || item.agent_type || item.format_type || "harvest_claims",
+          uuid: item.uuid || item.id || item.transaction_uuid || rawCreatedAt || "",
+          transaction_uuid: item.transaction_uuid || item.uuid || item.id || rawCreatedAt || "",
+        };
+      });
+
+      const filtered = normalizedItems.filter(hasPreview).sort((a, b) => {
+        const ta = new Date(a.createdAt).getTime();
+        const tb = new Date(b.createdAt).getTime();
+        return tb - ta; // recent first
+      });
+
+      setHistoryItems(filtered);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAgentHistory();
+  }, [refreshTrigger]);
+
+  const getAgentIcon = (agent: string) => {
+    const a = agent?.toLowerCase();
+
+    switch (a) {
+      case "research-agent":
+        return <Search className="size-3.5 text-blue-600" />;
+
+      case "coding-agent":
+        return <Cpu className="size-3.5 text-green-600" />;
+
+      case "review-agent":
+        return <FileSearch className="size-3.5 text-orange-600" />;
+
+      case "planning-agent":
+        return <Brain className="size-3.5 text-purple-600" />;
+
+      default:
+        return <Bot className="size-3.5 text-slate-600" />;
+    }
+  };
+
+  const getAgentColor = (agent: string) => {
+    const a = agent?.toLowerCase();
+
+    switch (a) {
+      case "research-agent":
+        return "bg-blue-50 text-blue-700 border-blue-200";
+
+      case "coding-agent":
+        return "bg-green-50 text-green-700 border-green-200";
+
+      case "review-agent":
+        return "bg-orange-50 text-orange-700 border-orange-200";
+
+      case "planning-agent":
+        return "bg-purple-50 text-purple-700 border-purple-200";
+
+      default:
+        return "bg-slate-50 text-slate-700 border-slate-200";
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case "completed":
+        return <CheckCircle2 className="size-3.5 text-green-600" />;
+
+      case "failed":
+        return <AlertCircle className="size-3.5 text-red-600" />;
+
+      case "pending":
+        return <Loader2 className="size-3.5 text-yellow-600 animate-spin" />;
+
+      default:
+        return null;
+    }
+  };
+
+  const handleView = async (item: any) => {
+    try {
+      setViewingLoading(true);
+      setViewingItem(item);
+
+      // If this is a local run item, show its content without fetching
+      if (item && item.id && String(item.id).startsWith("local-") && item.harvested_claims) {
+        const normalized = (item.harvested_claims || []).map((c: any) => {
+          const rawSource = c.source_documents || c.sourceDocuments || c.source_document || c.sourceDocument || c.documents || c.document_id || c.filename || [];
+          const sourceArray = Array.isArray(rawSource) ? rawSource : rawSource ? [rawSource] : [];
+          return {
+            ...c,
+            source_documents: sourceArray,
+            sourceDocument: sourceArray.join(', '),
+          };
+        });
+
+        setViewingContent(normalized);
+        setSelectedClaimUuids(normalized
+          .filter((claim: any) => !claim.is_pushed_to_promomats)
+          .map((claim: any) => claim.uuid));
+        setViewingLoading(false);
+        return;
+      }
+
+      if (item && item.harvested_claims) {
+        const normalized = (item.harvested_claims || []).map((c: any) => {
+          const rawSource = c.source_documents || c.sourceDocuments || c.source_document || c.sourceDocument || c.documents || c.document_id || c.filename || [];
+          const sourceArray = Array.isArray(rawSource) ? rawSource : rawSource ? [rawSource] : [];
+          return {
+            ...c,
+            source_documents: sourceArray,
+            sourceDocument: sourceArray.join(', '),
+          };
+        });
+
+        setViewingContent(normalized);
+        setSelectedClaimUuids(normalized
+          .filter((claim: any) => !claim.is_pushed_to_promomats)
+          .map((claim: any) => claim.uuid));
+        setViewingLoading(false);
+        return;
+      }
+
+      const response = await fetch(`${middleware_url}/batch_process/hls_platform/view_file`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          file_path: item.outputFilePath,
+        }),
+      });
+
+      const text = await response.text();
+      let parsed: any = null;
+
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = text;
+      }
+
+      setViewingContent(parsed);
+      if (Array.isArray(parsed)) {
+        const normalized = parsed.map((c: any) => {
+          const src = c.source_documents || c.sourceDocuments || c.source_document || (c.document_id ? [c.document_id] : []) || [];
+          return {
+            ...c,
+            source_documents: Array.isArray(src) ? src : [src],
+            sourceDocument: Array.isArray(src) ? src.join(', ') : (src || ''),
+          };
+        });
+
+        setViewingContent(normalized);
+        setSelectedClaimUuids(normalized.map((claim: any) => claim.uuid).filter(Boolean));
+      }
+    } catch (err) {
+      console.error(err);
+      setViewingContent(null);
+    } finally {
+      setViewingLoading(false);
+    }
+  };
+
+  const handleDownload = async (item: any) => {
+    try {
+      // For local runs, use viewingContent if available
+      if (item && String(item.id).startsWith("local-") && item.viewingContent) {
+        const content = item.viewingContent;
+        const blob = new Blob([JSON.stringify(content, null, 2)], { type: 'application/json' });
+        const link = document.createElement('a');
+        link.href = window.URL.createObjectURL(blob);
+        link.download = `harvest_claims_${item.id}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        return;
+      }
+
+      if (!item.outputFilePath) {
+        alert('No output file to download');
+        return;
+      }
+
+      const response = await fetch(`${middleware_url}/batch_process/hls_platform/view_file`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('token')}`,
+        },
+        credentials: 'include',
+        body: JSON.stringify({ file_path: item.outputFilePath }),
+      });
+
+      if (!response.ok) throw new Error('Failed to download file');
+
+      const blob = await response.blob();
+      const link = document.createElement('a');
+      link.href = window.URL.createObjectURL(blob);
+      const name = item.outputFilePath.split('/').pop() || `output_${item.id}`;
+      link.download = name;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error('Download failed', err);
+      alert('Download failed');
+    }
+  };
+
+  const handlePushToPromomats = async (item: any) => {
+    try {
+        // Resolve brand: prefer selectedAgentBrand prop, fallback to viewing item brand
+        console.log("selectedAgentBrand =", selectedAgentBrand);
+        const brandToUse = selectedAgentBrand || (item && item.brand_name) || viewingItem?.brand_name;
+        if (!brandToUse) {
+          alert('Brand not configured');
+          return;
+        }
+
+      setIsPushing(true);
+
+      let claims: any[] = [];
+
+      if (item && item.harvested_claims) {
+        claims = Array.isArray(item.harvested_claims) ? item.harvested_claims : [item.harvested_claims];
+      } else if (item && String(item.id).startsWith('local-') && item.viewingContent) {
+        claims = Array.isArray(item.viewingContent) ? item.viewingContent : [item.viewingContent];
+      } else if (item.outputFilePath) {
+        const resp = await fetch(`${middleware_url}/batch_process/hls_platform/view_file`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${localStorage.getItem('token')}`,
+          },
+          credentials: 'include',
+          body: JSON.stringify({ file_path: item.outputFilePath }),
+        });
+
+        const text = await resp.text();
+        try {
+          const parsed = JSON.parse(text);
+          claims = Array.isArray(parsed) ? parsed : parsed.claims || parsed.results || [parsed];
+        } catch {
+          claims = [{ text }];
+        }
+      }
+
+      const selectedClaims = claims.filter((claim: any) =>
+        claim.uuid && selectedClaimUuids.includes(claim.uuid) && !claim.is_pushed_to_promomats
+      );
+
+      const selectedClaimTexts = selectedClaims.map((c: any) => {
+        const originalText =
+          c.claim_text || c.text || c.claim || c.title || JSON.stringify(c);
+        return c.uuid ? editedClaimTexts[c.uuid] ?? originalText : originalText;
+      });
+
+      if (selectedClaimTexts.length === 0) {
+        alert('No claims selected to push');
+        return;
+      }
+
+      await createClaimPromomats(brandToUse, selectedClaims.map((c: any) => ({
+        uuid: c.uuid,
+        claim_text:
+          c.uuid && editedClaimTexts[c.uuid]
+            ? editedClaimTexts[c.uuid]
+            : c.claim_text || c.text || c.claim || c.claims || c.title || JSON.stringify(c),
+      })));
+      alert('Pushed claims to Promomats');
+
+      const updatedIds = selectedClaims.map((c: any) => c.uuid).filter(Boolean);
+      if (updatedIds.length > 0) {
+        setHistoryItems((prev) =>
+          prev.map((historyItem) => {
+            if (historyItem.id === item.id || historyItem.uuid === item.uuid) {
+              return {
+                ...historyItem,
+                harvested_claims: historyItem.harvested_claims?.map((claim) =>
+                  updatedIds.includes(claim.uuid)
+                    ? { ...claim, is_pushed_to_promomats: true }
+                    : claim
+                ),
+              };
+            }
+            return historyItem;
+          })
+        );
+
+        if (item && item.harvested_claims) {
+          item.harvested_claims = item.harvested_claims.map((claim: any) =>
+            updatedIds.includes(claim.uuid)
+              ? { ...claim, is_pushed_to_promomats: true }
+              : claim
+          );
+        }
+
+        setSelectedClaimUuids((prev) => prev.filter((uuid) => !updatedIds.includes(uuid)));
+      }
+    } catch (err: any) {
+      console.error('Push to Promomats failed', err);
+      alert(err?.message || 'Push failed');
+    } finally {
+      setIsPushing(false);
+    }
+  };
+
+  const closePreview = () => {
+    setViewingItem(null);
+    setViewingContent(null);
+    setSelectedClaimUuids([]);
+  };
+
+  const handleClaimTextChange = (claimUuid: string, value: string) => {
+    setEditedClaimTexts((prev) => ({
+      ...prev,
+      [claimUuid]: value,
+    }));
+  };
+
+  const getPreviewRows = () => {
+    if (!viewingContent) {
+      return [];
+    }
+
+    let rows: Array<{
+      uuid?: string;
+      claimText: string;
+      sourceDocument: string;
+      isPushed: boolean;
+      brandName?: string;
+    }> = [];
+
+    const extractRow = (item: any) => {
+      const claimPayload = item.claims || item;
+      const rawClaimTextCandidate =
+        claimPayload?.claim_text ||
+        claimPayload?.text ||
+        claimPayload?.claim ||
+        claimPayload?.claims ||
+        claimPayload?.title ||
+        item.claim_text ||
+        item.text ||
+        item.claim ||
+        item.claims ||
+        item.title;
+      const rawClaimText = Array.isArray(rawClaimTextCandidate)
+        ? rawClaimTextCandidate.join(" ")
+        : typeof rawClaimTextCandidate === "object"
+        ? JSON.stringify(rawClaimTextCandidate)
+        : rawClaimTextCandidate;
+      const uuid = item.uuid;
+      const claimText = uuid ? editedClaimTexts[uuid] ?? rawClaimText : rawClaimText;
+      const sourceValues =
+        claimPayload?.source_documents ||
+        claimPayload?.sourceDocuments ||
+        item.source_documents ||
+        item.sourceDocument ||
+        item.documents ||
+        item.document_id ||
+        item.source ||
+        item.file ||
+        item.document ||
+        item.source_file ||
+        "";
+      const sourceDocument = Array.isArray(sourceValues)
+        ? sourceValues.join(", ")
+        : sourceValues || "";
+      const isPushed = Boolean(item.is_pushed_to_promomats || item.isPushed || item.pushed);
+
+      const brandName = item.brand_name || claimPayload?.brand_name || viewingItem?.brand_name || null;
+
+      return {
+        uuid,
+        claimText,
+        sourceDocument,
+        isPushed,
+        brandName,
+      };
+    };
+
+    if (typeof viewingContent === "string") {
+      const lines = viewingContent.split(/\r?\n/).filter(Boolean);
+      rows = lines.map((line) => ({ claimText: line, sourceDocument: "", isPushed: false }));
+    } else if (Array.isArray(viewingContent)) {
+      rows = viewingContent.map(extractRow);
+    } else if (viewingContent && typeof viewingContent === "object") {
+      const candidates = viewingContent.claims || viewingContent.results || viewingContent.items || viewingContent.data || [viewingContent];
+      if (Array.isArray(candidates) && candidates.length > 0) {
+        rows = candidates.map(extractRow);
+      } else {
+        rows = [extractRow(viewingContent)];
+      }
+    }
+
+    return rows;
+  };
+
+  const previewRows = getPreviewRows();
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden px-8">
+       <div className="mb-4 px-4 py-2">
+  <div className="flex gap-2">
+    <History className="text-[var(--hls-primary)] size-7" />
+
+    <div className="flex flex-col justify-center gap-1">
+      <b className="text-slate-800 text-lg">
+        Agent History
+      </b>
+
+      <p className="text-[10px] text-[var(--hls-muted)]">
+        RECENT AGENT RUNS
+      </p>
+    </div>
+  </div>
+
+  <div className="flex items-center gap-1">
+
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={fetchAgentHistory}
+      className="text-xs h-7 text-[var(--hls-primary)] border-[var(--hls-primary)] hover:bg-[var(--hls-primary)]/10"
+    >
+      View History
+    </Button>
+
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={fetchAgentHistory}
+      disabled={loading}
+      title="Refresh history"
+    >
+      <RefreshCw
+        className={`size-4 ${loading ? "animate-spin" : ""}`}
+      />
+    </Button>
+
+    {/* Agent Filter */}
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm">
+          <Filter className="size-4" />
+          {selectedAgents.length > 0 && (
+            <span className="ml-1">
+              ({selectedAgents.length})
+            </span>
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+
+      <DropdownMenuContent
+        align="start"
+        className="w-56">
+        <DropdownMenuLabel>
+          Filter By Agent
+        </DropdownMenuLabel>
+
+        <DropdownMenuSeparator />
+
+        {getUniqueAgents().map((agent) => (
+          <DropdownMenuItem
+            key={formatAgentName(agent)}
+            onSelect={() => toggleAgentFilter(agent)}
+          >
+            <div className="flex items-center gap-2 flex-1">
+              {getAgentIcon(agent)}
+              {formatAgentName(agent)}
+            </div>
+
+            {selectedAgents.includes(agent) && (
+              <Check className="size-4" />
+            )}
+          </DropdownMenuItem>
+        ))}
+
+        {selectedAgents.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => setSelectedAgents([])}
+            >
+              Clear All
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+
+    {/* Creator Filter */}
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm">
+          <User className="size-4" />
+          {selectedCreatedPersons.length > 0 && (
+            <span className="ml-1">
+              ({selectedCreatedPersons.length})
+            </span>
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+
+      <DropdownMenuContent align="start" className="w-56">
+        <DropdownMenuLabel>
+          Filter By Creator
+        </DropdownMenuLabel>
+
+        <DropdownMenuSeparator />
+
+        {getUniqueCreatedPersons().map((person) => (
+          <DropdownMenuItem
+            key={person}
+            onSelect={() =>
+              toggleCreatedPersonFilter(person)
+            }
+          >
+            <span className="flex-1">
+              {person}
+            </span>
+
+            {selectedCreatedPersons.includes(person) && (
+              <Check className="size-4" />
+            )}
+          </DropdownMenuItem>
+        ))}
+
+        {selectedCreatedPersons.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() =>
+                setSelectedCreatedPersons([])
+              }
+            >
+              Clear All
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+
+    {/* File Filter */}
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm">
+          <FileText className="size-4" />
+          {selectedFileNames.length > 0 && (
+            <span className="ml-1">
+              ({selectedFileNames.length})
+            </span>
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+
+      <DropdownMenuContent className="w-72">
+        <DropdownMenuLabel>
+          Filter By File Name
+        </DropdownMenuLabel>
+
+        <DropdownMenuSeparator />
+
+        {getUniqueFileNames().map((file) => (
+          <DropdownMenuItem
+            key={file}
+            onSelect={() =>
+              toggleFileNameFilter(file)
+            }
+          >
+            <span className="flex-1 truncate">
+              {file}
+            </span>
+
+            {selectedFileNames.includes(file) && (
+              <Check className="size-4" />
+            )}
+          </DropdownMenuItem>
+        ))}
+
+        {selectedFileNames.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() =>
+                setSelectedFileNames([])
+              }
+            >
+              Clear All
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+
+  </div>
+</div>
+
+
+      <div className="flex-1 overflow-y-auto space-y-3">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-10">
+            <Loader2 className="size-8 animate-spin text-[var(--hls-primary)]" />
+          </div>
+        ) : error ? (
+          <div className="flex flex-col items-center py-8 text-red-500">
+            <AlertCircle className="size-8 mb-2" />
+            <p>{error}</p>
+          </div>
+        ) : (!latestRun && historyItems.length === 0)  ? (
+          <div className="flex flex-col items-center py-8 text-slate-400">
+            <Clock className="size-8 mb-2" />
+            <p>No items match selected filters</p>
+          </div>
+        ) : (
+            (() => {
+              const base = getFilteredHistoryItems();
+              const getHistoryKey = (item: any) => item?.transaction_uuid || item?.uuid || item?.id || "";
+              const latestRunKey = getHistoryKey(latestRun);
+              const hasBackendMatch = latestRun && latestRunKey
+                ? base.some((item) => getHistoryKey(item) === latestRunKey)
+                : false;
+              const displayed = latestRun && !hasBackendMatch
+                ? [latestRun, ...base]
+                : base;
+              return displayed.map((item) => (
+            <div
+              key={item.id}
+              onClick={() => {
+                setSelectedItemId(item.id);
+              }}
+              className={`p-3 rounded-xl border cursor-pointer transition-all
+              ${
+                selectedItemId === item.id
+                  ? "border-[var(--hls-primary)] bg-[var(--hls-primary)]/10"
+                  : "border-[var(--hls-border)] hover:border-[var(--hls-primary)]"
+              }`}
+            >
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="font-bold text-black">
+                    {item.agentType === "harvest_claims" && selectedAgent
+                      ? selectedAgent
+                      : formatAgentName(item.agentType) || item.sourceFile || "Agent Execution"}
+                  </p>
+
+                  <p className="text-xs text-slate-500 mt-1">
+                    {item.createdPerson}
+                  </p>
+                </div>
+
+                <Badge variant="outline">
+                  {getStatusIcon(item.status)}
+                </Badge>
+              </div>
+
+              <div className="mt-3 flex items-center gap-2">
+                <Badge
+                  variant="outline"
+                  className={getAgentColor(item.agentType)}
+                >
+                  {getAgentIcon(item.agentType)}
+                  <span className="ml-1">
+                    {formatAgentName(item.agentType)}
+                  </span>
+                </Badge>
+
+                <div className="ml-auto text-xs text-slate-500">
+                  {new Date(item.createdAt).toLocaleString()}
+                </div>
+              </div>
+
+              {selectedItemId === item.id && (
+                <>
+                  <Separator className="my-2" />
+
+                  <div className="flex flex-col gap-2">
+                    <div className="flex gap-1 flex-wrap">
+                        <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs text-[var(--hls-primary)] hover:bg-[var(--hls-primary)]/10"
+                        disabled={item.status !== 'completed'}
+                        onClick={(e) => { e.stopPropagation(); handleView(item); }}
+                      >
+                        <Eye className="size-3 mr-0.5" />
+                        View
+                      </Button>
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      Select a history item and click View to preview claim details.
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            ));
+          })()
+        )}
+      </div>
+
+      {viewingItem && (
+        <div
+          className="fixed inset-0 bg-black/25 backdrop-blur-sm z-[9999] flex items-center justify-center p-4"
+          onClick={closePreview}
+        >
+          <div
+            className="bg-white w-full max-w-6xl max-h-[92vh] rounded-xl shadow-2xl flex flex-col overflow-hidden relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-4 border-b flex justify-between items-center bg-white">
+              <h2 className="font-bold text-lg">
+                Harvested Claims
+              </h2>
+
+              <Button
+                variant="ghost"
+                onClick={closePreview}
+              >
+                Close
+              </Button>
+            </div>
+
+            <div className="flex-1 overflow-auto p-6 bg-white">
+              {viewingLoading ? (
+                <div className="flex justify-center py-10"> 
+                  <Loader2 className="size-8 animate-spin" />
+                </div>
+              ) : previewRows.length > 0 ? (
+                <div className="overflow-x-auto">
+                    <table className="min-w-full text-left text-sm">
+                    {/* <table className="w-full table-fixed text-left text-sm"> */}
+                    <thead>
+                      <tr>
+                        <th className="border-b px-4 py-2 text-slate-600">Select</th>
+                        <th className="border-b px-4 py-2 text-slate-600">S.No</th>
+                        <th className="border-b px-4 py-2 text-slate-600">Brand</th>
+                        <th className="border-b px-4 py-2 text-slate-600 w-4/5">Claim Text</th>
+                        <th className="border-b px-4 py-2 text-slate-600 w-1/5">Source Document</th>
+                        <th className="border-b px-4 py-2 text-slate-600">Pushed</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewRows.map((row, index) => (
+                        <tr key={index} className="border-b last:border-b-0 odd:bg-slate-50">
+                          <td className="px-4 py-3 align-top text-slate-700 whitespace-pre-wrap break-words">
+                            {row.uuid ? (
+                              <Checkbox
+                                checked={selectedClaimUuids.includes(row.uuid)}
+                                disabled={row.isPushed}
+                                onCheckedChange={() => row.uuid && toggleClaimSelection(row.uuid)}
+                              />
+                            ) : (
+                              <span className="text-slate-400">-</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 align-top text-slate-700 whitespace-pre-wrap break-words">
+                            {index + 1}
+                          </td>
+                          <td className="px-4 py-3 align-top text-slate-700 whitespace-pre-wrap break-words">
+                            {row.brandName || viewingItem?.brand_name || <span className="text-slate-400">-</span>}
+                          </td>
+                          <td className="px-4 py-3 align-top text-slate-700 whitespace-pre-wrap break-words">
+                            {row.uuid ? (
+                              row.isPushed ? (
+                                <div className="whitespace-pre-wrap break-words text-slate-700">{row.claimText}</div>
+                              ) : (
+                                <textarea
+                                  value={row.claimText}
+                                  onChange={(e) => handleClaimTextChange(row.uuid!, e.target.value)}
+                                  className="w-full min-h-[72px] resize-vertical rounded border border-slate-300 px-2 py-2 text-sm text-slate-700"
+                                />
+                              )
+                            ) : (
+                              <div>{row.claimText}</div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 align-top text-slate-600 whitespace-pre-wrap break-words w-1/5">
+                            {row.sourceDocument || "N/A"}
+                          </td>
+                          <td className="px-4 py-3 align-top text-slate-600 whitespace-pre-wrap break-words">
+                            {row.isPushed ? (
+                              <Badge variant="outline" className="border-green-300 text-green-700">
+                                Yes
+                              </Badge>
+                            ) : (
+                              <span className="text-slate-400">No</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-sm text-slate-700">
+                  No claim preview available for this item.
+                </div>
+              )}
+            </div>
+            <div className="border-t p-4 flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-50">
+              {/* <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => viewingItem && handleDownload(viewingItem)}
+                >
+                  <Download className="size-4 mr-2" />
+                  Download
+                </Button>
+              </div> */}
+
+              <div className="flex items-center gap-2 ml-auto">
+                {/* <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={closePreview}
+                >
+                  Close
+                </Button> */}
+
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="bg-[var(--hls-primary)] text-white"
+                  disabled={
+                    isPushing ||
+                    selectedClaimUuids.length === 0 ||
+                    previewRows.every((row) => row.isPushed)
+                  }
+                  onClick={() => viewingItem && handlePushToPromomats(viewingItem)}
+                >
+                  {isPushing ? <Loader2 className="size-4 animate-spin mr-2" /> : <Send className="size-4 mr-2" />}
+                  Push to Promomats
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
