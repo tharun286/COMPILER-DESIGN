@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { ScrollArea } from '../ui/scroll-area';
-import { Sparkles, X, Search, Star, Clock, TrendingUp, Lightbulb, CheckCircle2, Eye, Download, AlertCircle, Loader2, RefreshCw } from 'lucide-react';
+import { Sparkles, X, Search, Star, Clock, TrendingUp, Lightbulb, CheckCircle2, Eye, Download, AlertCircle, Loader2, RefreshCw, FileUp } from 'lucide-react';
 import { Document } from '../../hls_main_page';
 import { Card } from '../ui/card';
 import { Badge } from '../ui/badge';
@@ -553,12 +553,15 @@ export function SelectSourceAsset({
       {!isStandalone && (
         <div className="flex flex-col h-full overflow-hidden px-4 py-1 opacity-95">
           <div className="mb-2 flex-shrink-0">
-            <div className="flex items-center gap-2 mb-0">
-            
-            
-              <b className="text-slate-800 text-xl leading-none">Select Asset</b>
+            <div className="flex items-center gap-2 mb-1">
+              <FileUp className="text-[#53A2FF] size-8 shrink-0 relative -top-[20px]" />
+
+              <div className="flex flex-col justify-center">
+                <b className="text-slate-800 text-xl leading-none">Select Asset</b>
+
+                <p className="mt-2 text-[10px] uppercase tracking-wide text-[var(--hls-muted)] leading-none">Choose an approved promotional asset from Veeva</p>
+              </div>
             </div>
-            <p className="text-[10px] text-[var(--hls-muted)] uppercase">Choose an approved promotional asset from Veeva</p>
           </div>
 
           <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
